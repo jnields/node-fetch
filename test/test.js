@@ -10,6 +10,7 @@ import FormData from 'form-data';
 import stringToArrayBuffer from 'string-to-arraybuffer';
 import URLSearchParams_Polyfill from 'url-search-params';
 import { URL } from 'whatwg-url';
+import AbortController from 'abort-controller';
 
 const { spawn } = require('child_process');
 const http = require('http');
@@ -778,6 +779,135 @@ describe('node-fetch', () => {
 			.on('exit', () => {
 				done();
 			});
+	});
+
+	it('should support request cancellation with signal', function () {
+		this.timeout(500);
+		const url = `${base}timeout`;
+		const controller = new AbortController();
+		const opts = {
+			signal: controller.signal
+		};
+		const fetched = fetch(url, opts);
+		setTimeout(() => controller.abort(), 100);
+		return expect(fetched).to.eventually.be.rejected
+			.and.be.an.instanceOf(Error)
+			.and.include({
+				type: 'aborted',
+				name: 'AbortError',
+			});
+	});
+
+	it('should reject immediately if signal has already been aborted', function () {
+		const url = `${base}timeout`;
+		const controller = new AbortController();
+		const opts = {
+			signal: controller.signal
+		};
+		controller.abort();
+		const fetched = fetch(url, opts);
+		return expect(fetched).to.eventually.be.rejected
+			.and.be.an.instanceOf(Error)
+			.and.include({
+				type: 'aborted',
+				name: 'AbortError',
+			});
+	});
+
+	it('should clear internal timeout when request is cancelled with an AbortSignal', function(done) {
+		this.timeout(2000);
+		const script = `
+			var AbortController = require('abortcontroller-polyfill/dist/cjs-ponyfill').AbortController;
+			var controller = new AbortController();
+			require('./')(
+				'${base}timeout',
+				{ signal: controller.signal, timeout: 10000 }
+			);
+			setTimeout(function () { controller.abort(); }, 100);
+		`
+		spawn('node', ['-e', script])
+			.on('exit', () => {
+				done();
+			});
+	});
+
+	it('should remove internal AbortSignal event listener when timeout is reached', function () {
+		const controller = new AbortController();
+		const promise = fetch(
+			`${base}timeout`,
+			{ signal: controller.signal, timeout: 100 }
+		);
+		return Promise.all([
+			expect(promise).to.eventually.be.rejected
+				.and.be.an.instanceof(FetchError)
+				.and.have.property('type', 'request-timeout'),
+			promise.catch(() => {
+				// TODO - how to infer no listeners on abort signal?
+			})
+		]);
+	});
+
+	it('should reject response body with AbortError when aborted before stream has been read completely', () => {
+		const controller = new AbortController();
+		return expect(fetch(
+			`${base}slow`,
+			{ signal: controller.signal }
+		))
+			.to.eventually.be.fulfilled
+			.then((res) => {
+				const promise = res.text();
+				controller.abort();
+				return expect(promise)
+					.to.eventually.be.rejected
+					.and.be.an.instanceof(Error)
+					.and.have.property('name', 'AbortError');
+			});
+	});
+
+	it('should reject response body methods immediately with AbortError when aborted before stream is disturbed', () => {
+		const controller = new AbortController();
+		return expect(fetch(
+			`${base}slow`,
+			{ signal: controller.signal }
+		))
+			.to.eventually.be.fulfilled
+			.then((res) => {
+				controller.abort();
+				return expect(res.text())
+					.to.eventually.be.rejected
+					.and.be.an.instanceof(Error)
+					.and.have.property('name', 'AbortError');
+			});
+	});
+
+	it('should cancel request body of type Stream with AbortError when aborted', () => {
+		const controller = new AbortController();
+		const body = new stream.Readable({ objectMode: true });
+		body._read = () => {};
+		const promise = fetch(
+			`${base}slow`,
+			{ signal: controller.signal, body, method: 'POST' }
+		);
+
+		const result = Promise.all([
+			new Promise((resolve, reject) => {
+				body.on('error', (error) => {
+					try {
+						expect(error).to.be.an.instanceof(Error).and.have.property('name', 'AbortError')
+						resolve();
+					} catch (err) {
+						reject(err);
+					}
+				});
+			}),
+			expect(promise).to.eventually.be.rejected
+				.and.be.an.instanceof(Error)
+				.and.have.property('name', 'AbortError')
+		]);
+
+		controller.abort();
+
+		return result;
 	});
 
 	it('should set default User-Agent', function () {

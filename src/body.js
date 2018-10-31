@@ -59,7 +59,10 @@ export default function Body(body, {
 
 	if (body instanceof Stream) {
 		body.on('error', err => {
-			this[INTERNALS].error = new FetchError(`Invalid response body while trying to fetch ${this.url}: ${err.message}`, 'system', err);
+			const error = err.name === 'AbortError'
+				? err
+				: new FetchError(`Invalid response body while trying to fetch ${this.url}: ${err.message}`, 'system', err);
+			this[INTERNALS].error = error;
 		});
 	}
 }
@@ -238,7 +241,13 @@ function consumeBody() {
 
 		// handle stream error, such as incorrect content-encoding
 		this.body.on('error', err => {
-			reject(new FetchError(`Invalid response body while trying to fetch ${this.url}: ${err.message}`, 'system', err));
+			// if the request was aborted, reject with this Error
+			if (err.name === 'AbortError') {
+				abort = true;
+				reject(err);
+			} else {
+				reject(new FetchError(`Invalid response body while trying to fetch ${this.url}: ${err.message}`, 'system', err));
+			}
 		});
 
 		this.body.on('data', chunk => {

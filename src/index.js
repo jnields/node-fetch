@@ -11,13 +11,14 @@ import { resolve as resolve_url } from 'url';
 import http from 'http';
 import https from 'https';
 import zlib from 'zlib';
-import { PassThrough } from 'stream';
+import Stream, { PassThrough } from 'stream';
 
 import Body, { writeToStream, getTotalBytes } from './body';
 import Response from './response';
 import Headers, { createHeadersLenient } from './headers';
 import Request, { getNodeRequestOptions } from './request';
 import FetchError from './fetch-error';
+import AbortError from './abort-error';
 
 /**
  * Fetch function
@@ -42,13 +43,42 @@ export default function fetch(url, opts) {
 		const options = getNodeRequestOptions(request);
 
 		const send = (options.protocol === 'https:' ? https : http).request;
+		const { signal } = request;
+		let response = null;
+
+		const abort = ()  => {
+			let error = new AbortError('The user aborted a request.');
+			reject(error);
+			if (request.body && request.body instanceof Stream) {
+				request.body.destroy(error);
+			}
+			if (!response || !response.body) return;
+			response.body.emit('error', error);
+		}
+
+		if (signal && signal.aborted) {
+			abort();
+			return;
+		}
+
+		const abortAndFinalize = () => {
+			abort();
+			finalize();
+		}
 
 		// send request
 		const req = send(options);
 		let reqTimeout;
 
+		if (signal) {
+			signal.addEventListener('abort', abortAndFinalize);
+		}
+
+		const removeAbortSignal = () => signal.removeEventListener('abort', abortAndFinalize);
+
 		function finalize() {
 			req.abort();
+			if (signal) signal.removeEventListener('abort', abortAndFinalize);
 			clearTimeout(reqTimeout);
 		}
 
@@ -67,6 +97,9 @@ export default function fetch(url, opts) {
 		});
 
 		req.on('response', res => {
+			res.on('close', () => {
+				signal.removeEventListener('abort', abortAndFinalize);
+			});
 			clearTimeout(reqTimeout);
 
 			const headers = createHeadersLenient(res.headers);
@@ -160,7 +193,8 @@ export default function fetch(url, opts) {
 			// 4. no content response (204)
 			// 5. content not modified response (304)
 			if (!request.compress || request.method === 'HEAD' || codings === null || res.statusCode === 204 || res.statusCode === 304) {
-				resolve(new Response(body, response_options));
+				response = new Response(body, response_options);
+				resolve(response);
 				return;
 			}
 
@@ -177,7 +211,8 @@ export default function fetch(url, opts) {
 			// for gzip
 			if (codings == 'gzip' || codings == 'x-gzip') {
 				body = body.pipe(zlib.createGunzip(zlibOptions));
-				resolve(new Response(body, response_options));
+				response = new Response(body, response_options);
+				resolve(response);
 				return;
 			}
 
@@ -193,13 +228,15 @@ export default function fetch(url, opts) {
 					} else {
 						body = body.pipe(zlib.createInflateRaw());
 					}
-					resolve(new Response(body, response_options));
+					response = new Response(body, response_options);
+					resolve(response);
 				});
 				return;
 			}
 
 			// otherwise, use response as-is
-			resolve(new Response(body, response_options));
+			response = new Response(body, response_options);
+			resolve(response);
 		});
 
 		writeToStream(req, request);

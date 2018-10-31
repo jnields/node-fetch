@@ -35,6 +35,10 @@ function isRequest(input) {
  */
 export default class Request {
 	constructor(input, init = {}) {
+		if (input.timeout || init.timeout) {
+			console.warn('The timeout option is deprecated and will be removed from the public API in a future version of node-fetch in favor of signal.')
+		}
+
 		let parsedURL;
 
 		// normalize input
@@ -81,11 +85,17 @@ export default class Request {
 			}
 		}
 
+		let signal = isRequest(input)
+			? input.signal
+			: null;
+		if (init.signal) signal = init.signal
+
 		this[INTERNALS] = {
 			method,
 			redirect: init.redirect || input.redirect || 'follow',
 			headers,
-			parsedURL
+			parsedURL,
+			signal,
 		};
 
 		// node-fetch-only options
@@ -113,6 +123,10 @@ export default class Request {
 
 	get redirect() {
 		return this[INTERNALS].redirect;
+	}
+
+	get signal() {
+		return this[INTERNALS].signal;
 	}
 
 	/**

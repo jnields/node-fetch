@@ -116,7 +116,7 @@ fetch('https://httpbin.org/post', { method: 'POST', body: 'a=1' })
 ```js
 const body = { a: 1 };
 
-fetch('https://httpbin.org/post', { 
+fetch('https://httpbin.org/post', {
         method: 'post',
         body:    JSON.stringify(body),
         headers: { 'Content-Type': 'application/json' },
@@ -277,10 +277,11 @@ The default values are shown after each option key.
     headers: {},        // request headers. format is the identical to that accepted by the Headers constructor (see below)
     body: null,         // request body. can be null, a string, a Buffer, a Blob, or a Node.js Readable stream
     redirect: 'follow', // set to `manual` to extract redirect headers, `error` to reject redirect
+    signal: null,       // pass an instance of AbortSignal to optionally abort requests
 
     // The following properties are node-fetch extensions
     follow: 20,         // maximum redirect count. 0 to not follow redirect
-    timeout: 0,         // req/res timeout in ms, it resets on redirect. 0 to disable (OS limit applies)
+    timeout: 0,         // *DEPRECATED in favor of signal* req/res timeout in ms, it resets on redirect. 0 to disable (OS limit applies)
     compress: true,     // support gzip/deflate content encoding. false to disable
     size: 0,            // maximum response body size in bytes. 0 to disable
     agent: null         // http(s).Agent instance, allows custom proxy, certificate etc.
@@ -465,6 +466,13 @@ Identical to `body.text()`, except instead of always converting to UTF-8, encodi
 <small>*(node-fetch extension)*</small>
 
 An operational error in the fetching process. See [ERROR-HANDLING.md][] for more info.
+
+<a id="class-aborterror"></a>
+### Class: AbortError
+
+<small>*(node-fetch extension)*</small>
+
+An Error thrown when the request is aborted in response to an `AbortSignal`'s `abort` event. It has a `name` property of `AbortError`. See [ERROR-HANDLING.MD][] for more info.
 
 ## Acknowledgement
 
